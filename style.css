@@ -1,0 +1,121 @@
+/* Body */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f2f6;
+}
+
+/* Title */
+h1 {
+    color: #2168b8;
+    text-align: center;
+    font-size: 50px;
+}
+
+/* Dropdowns */
+.css-1wa3eu0-placeholder {
+    color: #555;
+}
+
+/* Subtitle */
+h2 {
+    color: #7a0e0e;
+    font-size: 50px;
+    margin-bottom: 10px;
+}
+
+/* Text */
+p {
+    color: #ffffff;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+/* Dropdowns */
+.css-1wa3eu0-placeholder {
+    color: #555;
+    font-size: 16px;
+}
+
+/* Button */
+[data-testid="baseButton-secondary"] {
+    /* background-color: #4CAF50; */
+    color: rgb(254, 254, 254);
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    background-color: #09210a;
+}
+
+[data-testid="baseButton-secondary"]:hover {
+    background-color: #45a049;
+}
+
+/* Tables */
+.stTable {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 20px;
+}
+
+.stTable th, .stTable td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    font-size: 16px;
+}
+
+.stTable th {
+    background-color: #f2f2f2;
+}
+
+.stTable tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+.stTable tr:hover {
+    background-color: #ddd;
+}
+
+/* Text Input */
+.css-1eh39ty {
+    width: 100%;
+    padding: 10px;
+    margin-top: 10px;
+    margin-bottom: 20px;
+    box-sizing: border-box;
+    border: 2px solid #ccc;
+    border-radius: 4px;
+    background-color: #f8f8f8;
+    transition: border-color 0.3s;
+    font-size: 16px;
+}
+
+.css-1eh39ty:focus {
+    border-color: #4CAF50;
+    outline: none;
+}
+
+/* Select Box */
+.css-2b097c-container {
+    width: 100%;
+    margin-top: 10px;
+    margin-bottom: 20px;
+}
+
+/* Header */
+.css-hi6a2p {
+    margin-top: 20px;
+    margin-bottom: 10px;
+}
+
+/* Footer */
+.css-qbe2hs {
+    margin-top: 30px;
+    text-align: center;
+    color: #777;
+    font-size: 14px;
+}
+
+
