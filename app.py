@@ -18,14 +18,14 @@ with open('style.css') as f:
 user_api_key = st.text_input("OpenAI API Key: ", type="password")
 client = openai.OpenAI(api_key=user_api_key)
 
-# Setup SQLite database for storing questions and answers
-conn = sqlite3.connect('questions.db')
+conn = sqlite3.connect('feedback.db')
 c = conn.cursor()
+# Create a table for storing feedback
 c.execute('''
-          CREATE TABLE IF NOT EXISTS questions (
+          CREATE TABLE IF NOT EXISTS feedback (
               id INTEGER PRIMARY KEY,
-              question TEXT NOT NULL,
-              answer TEXT NOT NULL
+              rating INTEGER NOT NULL,
+              feedback TEXT NOT NULL
           )
           ''')
 conn.commit()
@@ -111,7 +111,8 @@ def main():
                         "role": "user",
                         "content": f"With reference to the content in {file_text} and {selected_topic}, generate {user_input_no_of_qns} {user_input_topic} questions with answers for the academic level of \
                             {user_input_acad_level} according to the Singapore education system in {user_input_difficulty} difficulty level. Keywords: {user_input_keyword}.\
-                                Hide any annotation or irrelevant messages in the output, such as 'Sure! Here are x easy mathematics questions...'."
+                                Hide any annotation or irrelevant messages in the output, such as 'Sure! Here are x easy mathematics questions...'. \
+                                    In essence, present these questions and answers in a format clearly and readable to users"
                     }],
                     temperature=0.5,
                     n=1,
@@ -122,14 +123,14 @@ def main():
                     st.session_state.generated_questions = content
 
                     # Parse and insert questions and answers into the database
-                    questions_and_answers = content.split('\n')  # Adjust based on your actual content format
-                    for qa in questions_and_answers:
-                        if 'Q:' in qa and 'A:' in qa:
-                            question, answer = qa.split('A:')
-                            question = question.replace('Q:', '').strip()
-                            answer = answer.strip()
-                            c.execute('INSERT INTO questions (question, answer) VALUES (?, ?)', (question, answer))
-                            conn.commit()
+                    # questions_and_answers = content.split('\n')  # Adjust based on your actual content format
+                    # for qa in questions_and_answers:
+                    #     if 'Q:' in qa and 'A:' in qa:
+                    #         question, answer = qa.split('A:')
+                    #         question = question.replace('Q:', '').strip()
+                    #         answer = answer.strip()
+                    #         c.execute('INSERT INTO questions (question, answer) VALUES (?, ?)', (question, answer))
+                    #         conn.commit()
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
 
@@ -152,10 +153,9 @@ def main():
             if st.button("Submit Feedback"):
                 st.success("Thank you for your feedback!")
                 st.session_state.feedback_submitted = True
-                # Here you can store the feedback to a database or a file
-                # For demonstration, we will print it out
-                st.write(f"Rating: {rating}")
-                st.write(f"Feedback: {feedback}")
+                # Insert feedback into the database
+                c.execute('INSERT INTO feedback (rating, feedback) VALUES (?, ?)', (rating, feedback))
+                conn.commit()
 
         # Convert content into a DataFrame for Excel export
         df = pd.DataFrame({
