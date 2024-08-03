@@ -71,7 +71,7 @@ def main():
         acad_levels = ["Primary One", "Primary Two", "Primary Three", "Primary Four", "Primary Five", "Primary Six"]
         user_input_acad_level = st.selectbox('Academic Level', acad_levels)
 
-    col4, col5, col6, col7 = st.columns([1, 1, 3, 1])
+    col4, col5, col6 = st.columns([1, 1, 3])
     with col4:
         difficulties = ["Easy", "Medium", "Hard"]
         user_input_difficulty = st.selectbox('Question Difficulty', difficulties)
@@ -82,7 +82,8 @@ def main():
     with col6:
         user_input_keyword = st.text_input("Keywords (Optional): ")
 
-    with col7:
+    buff, col, buff2 = st.columns([1,2,1])
+    with col:
         uploaded_file = st.file_uploader("Upload a file (Optional)", type=['txt', 'pdf'])
 
     file_text = ""
@@ -134,7 +135,7 @@ def main():
 
     if "generated_questions" in st.session_state:
         content = st.session_state.generated_questions
-        st.text_area("Generated Questions", content, height=250)
+        st.text_area("Generated Questions", content, height=500)
 
         # Add a rating and feedback section
         st.subheader("Rate the Generated Questions")
