@@ -109,10 +109,10 @@ def main():
                     model="gpt-4o",
                     messages=[{
                         "role": "user",
-                        "content": f"With reference to the content in {file_text} and {selected_topic}, generate {user_input_no_of_qns} {user_input_topic} questions with answers for the academic level of \
+                        "content": f"With reference to the content in {file_text} and {selected_topic}, generate {user_input_no_of_qns} {user_input_topic} unique assessment or exam-style questions with answers for the academic level of \
                             {user_input_acad_level} according to the Singapore education system in {user_input_difficulty} difficulty level. Keywords: {user_input_keyword}.\
                                 Hide any annotation or irrelevant messages in the output, such as 'Sure! Here are x easy mathematics questions...'. \
-                                    In essence, present these questions and answers in a format clearly and readable to users"
+                                    In essence, present these questions and answers in a format clearly and readable to users. Keep the question pool as diversified as possible without compromising on topic relevancy"
                     }],
                     temperature=0.5,
                     n=1,
