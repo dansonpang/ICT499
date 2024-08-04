@@ -14,9 +14,7 @@ st.set_page_config(page_title="Assessment Generator", page_icon=":pencil:", layo
 with open('style.css') as f:
     st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-# Set OpenAI API keys
-user_api_key = st.text_input("OpenAI API Key: ", type="password")
-client = openai.OpenAI(api_key=user_api_key)
+
 
 conn = sqlite3.connect('feedback.db')
 c = conn.cursor()
@@ -57,7 +55,11 @@ subject_to_topics = {
 def main():
     st.title("Assessment Generator")
     st.subheader("Generate Assessments based on Academic Level and Topics")
-
+    
+    # Set OpenAI API keys
+    user_api_key = st.text_input("OpenAI API Key: ", type="password")
+    client = openai.OpenAI(api_key=user_api_key)
+    
     # Using columns to organize inputs
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
