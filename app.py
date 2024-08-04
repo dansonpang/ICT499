@@ -55,7 +55,7 @@ subject_to_topics = {
 def main():
     st.title("Assessment Generator")
     st.subheader("Generate Assessments based on Academic Level and Topics")
-    
+
     # Set OpenAI API keys
     user_api_key = st.text_input("OpenAI API Key: ", type="password")
     client = openai.OpenAI(api_key=user_api_key)
@@ -75,7 +75,7 @@ def main():
 
     col4, col5, col6 = st.columns([1, 1, 3])
     with col4:
-        difficulties = ["Easy", "Medium", "Hard"]
+        difficulties = ["Basic", "Intermediate", "Advanced"]
         user_input_difficulty = st.selectbox('Question Difficulty', difficulties)
 
     with col5:
