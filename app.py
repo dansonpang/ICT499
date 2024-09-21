@@ -1,4 +1,3 @@
-# Import necessary libraries
 import streamlit as st
 import pandas as pd
 import openai
@@ -7,6 +6,7 @@ import io
 import openpyxl
 import sqlite3
 import re
+import time
 
 # Apply a custom theme via Streamlit's configuration
 st.set_page_config(page_title="Assessment Generator", page_icon=":pencil:", layout="wide")
@@ -29,22 +29,67 @@ conn.commit()
 
 @st.cache_data
 def read_pdf(file):
-    # Read and extract text from a PDF file
     with io.BytesIO(file.getvalue()) as f:
         reader = PyPDF2.PdfReader(f)
-        text = ''
-        for page in reader.pages:
-            text += page.extract_text()
+        text = ''.join([page.extract_text() for page in reader.pages])
     return text
 
 def estimate_tokens(text):
-    # Estimate the number of tokens in the provided text
     words = text.split()
     return len(words) * 1.33  # Approximation: 1.33 words per token
 
+def fix_repeated_units(content):
+    content = re.sub(r'(km/h)\s+\1', r'\1', content)
+    content = re.sub(r'(hours)\s+\1', r'\1', content)
+    return content
+
+def fix_unbalanced_braces(content):
+    open_braces = content.count('{')
+    close_braces = content.count('}')
+    if open_braces > close_braces:
+        content += '}' * (open_braces - close_braces)
+    elif close_braces > open_braces:
+        content = '{' * (close_braces - open_braces) + content
+    return content
+
+def fix_nested_fractions(content):
+    fraction_pattern = r'\\frac\{[^\}]*\}\{[^\}]*\}'
+    content = re.sub(fraction_pattern, lambda match: fix_unbalanced_braces(match.group()), content)
+    return content
+
+def clean_latex_expression(content):
+    content = re.sub(r'\(\s*\\frac\{[^}]*\}\{[^}]*\}\s*\)', lambda match: match.group(0)[1:-1], content)
+    content = re.sub(r',\s*\\text{km/h}', r'\\, \text{km/h}', content)
+    content = re.sub(r',\s*\\text{hours}', r'\\, \text{hours}', content)
+    content = re.sub(r'\)\s*km/h', r'\\, \text{km/h})', content)
+    content = re.sub(r'\)\s*hours', r'\\, \text{hours})', content)
+    content = re.sub(r'\\frac\s*\{(.*?)\}\s*\{(.*?)\}', r'\\frac{\1}{\2}', content)
+    content = re.sub(r'(km/h)\s+(km/h)', r'\1', content)
+    content = re.sub(r'(hours)\s+(hours)', r'\1', content)
+    return content
+
+def fix_latex_expressions(content):
+    content = fix_unbalanced_braces(content)
+    content = fix_repeated_units(content)
+    content = re.sub(r'\(\s+', '(', content)
+    content = re.sub(r'\s+\)', ')', content)
+    content = clean_latex_expression(content)
+    return content
+
+def complete_latex_expressions(content):
+    content = fix_nested_fractions(content)
+    content = re.sub(r'\\frac\{([^\}]*)$', r'\\frac{\1}', content)
+    content = re.sub(r'\\text\{([^\}]*)$', r'\\text{\1}', content)
+    return content
+
+def custom_latex_processing(content):
+    content = fix_unbalanced_braces(content)
+    content = complete_latex_expressions(content)
+    content = fix_repeated_units(content)
+    return content
+
 def display_content_with_latex(content):
-    """ Function to identify and render LaTeX expressions within the content """
-    # Regular expression to detect LaTeX patterns
+    content = custom_latex_processing(content)
     latex_patterns = [
         r'\\frac\{.*?\}\{.*?\}',  # Fractions
         r'\$.*?\$',               # Inline math
@@ -59,35 +104,21 @@ def display_content_with_latex(content):
         r'\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b',  # Trig and log functions
         r'\\left[\(\[\{].*?\\right[\)\]\}]',  # Parentheses and Brackets
         r'\\begin\{aligned\}.*?\\end\{aligned\}',  # Aligned equations
-        # Add more patterns as needed
     ]
-    
-    # Compile regex to match any LaTeX pattern
     latex_regex = re.compile('|'.join(latex_patterns))
-    
-    # Split content into parts based on LaTeX delimiters
     parts = re.split(r'(\$.*?\$|\\frac\{.*?\}\{.*?\}|\\sqrt(?:\{.*?\})?|\\sum(?:_\{.*?\})?(?:\^\{.*?\})?|\\int(?:_\{.*?\})?(?:\^\{.*?\})?|\^\{.*?\}|_\{.*?\}|\\begin\{.*?matrix\}.*?\\end\{.*?matrix\}|\\text\{.*?\}|\\[a-zA-Z]+(?=\W|\Z)|\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b|\\left[\(\[\{].*?\\right[\)\]\}]|\\begin\{aligned\}.*?\\end\{aligned\})', content)
-    
-    # Initialize a list to hold processed parts
     processed_parts = []
-
     for part in parts:
         if latex_regex.search(part):
             processed_parts.append(f"$$ {part.strip()} $$")
         else:
             processed_parts.append(part.strip())
-
-    # Join all processed parts into a single string to maintain proper formatting
     final_content = ' '.join(processed_parts)
-    
-    # Render the final content with LaTeX where applicable
     st.markdown(final_content)
 
 def convert_latex_to_text(content):
-    """Convert LaTeX fractions and other expressions to plain text format for Excel export."""
-    # Replace LaTeX fractions with plain text fractions
     content = re.sub(r'\\frac\{(.*?)\}\{(.*?)\}', r'\1/\2', content)
-    # You can add more replacements here as needed for other LaTeX expressions
+    content = re.sub(r'\\text\{(.*?)\}', r'\1', content)
     return content
 
 # Mapping subjects to topics
@@ -98,12 +129,28 @@ subject_to_topics = {
     "Social Studies": ["Discovering Self and Immediate Environment", "Understanding Singapore in the Past and Present", "Appreciating Singapore, the Region and the World We Live In"]
 }
 
-# Streamlit code to create the UI
-def main():
-    st.title("Assessment Generator")
-    st.subheader("Generate Assessments based on Academic Level and Topics")
+# Language options for the application
+language_options = {
+    "English": "en",
+    "Spanish": "es",
+    "French": "fr",
+    "Chinese": "zh",
+    "German": "de",
+    "Japanese": "ja"
+}
 
-    # Form to handle API key input and submission
+def main():
+    if 'generated_questions' not in st.session_state:
+        st.session_state.generated_questions = ""
+    if 'feedback_submitted' not in st.session_state:
+        st.session_state.feedback_submitted = False
+
+    st.title("Assessment Generator")
+    st.subheader("Generate Assessments based on Academic Level, Topics, and Language")
+
+    # Language selection
+    language = st.selectbox("Choose a Language", list(language_options.keys()))
+
     with st.form(key="api_form"):
         user_api_key = st.text_input("OpenAI API Key:", type="password")
         submit_button = st.form_submit_button(label="Set API Key")
@@ -119,7 +166,6 @@ def main():
     openai.api_key = st.session_state.api_key
     client = openai.OpenAI(api_key=user_api_key)
 
-    # Using columns to organize inputs
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         subject_list = list(subject_to_topics.keys())
@@ -136,78 +182,85 @@ def main():
     with col4:
         difficulties = ["Basic", "Intermediate", "Advanced"]
         user_input_difficulty = st.selectbox('Question Difficulty', difficulties)
-
+    
     with col5:
+        question_type = st.selectbox("Question Type", ["Short Questions", "Comprehensive Exam-Style Questions"])
+
+    with col6:
         user_input_no_of_qns = st.number_input("Number of Questions:", min_value=1, max_value=50, value=10)
     
     with col6:
         user_input_keyword = st.text_input("Keywords (Optional): ")
 
-    # Show weightage option only if more than one topic is selected
-    if len(selected_topics) > 1:
-        specify_weightage = st.checkbox("Specify weightage of topics?")
-        weightage_info = {}
+    specify_weightage = st.checkbox("Specify weightage of topics?")
+    weightage_info = {}
 
-        if specify_weightage:
+    if specify_weightage:
+        if len(selected_topics) > 1:
             st.markdown("### Enter the weightage for each selected topic:")
             total_weight = 0
-
             for topic in selected_topics:
                 weight = st.number_input(f"Weightage for {topic} (%)", min_value=0, max_value=100, value=0)
                 weightage_info[topic] = weight
                 total_weight += weight
-
             if total_weight != 100:
                 st.error("Total weightage must sum up to 100%. Please adjust your inputs.")
+        else:
+            st.warning("Weightage is only available when multiple topics are selected.")
 
     buff, col, buff2 = st.columns([1, 2, 1])
     with col:
-        uploaded_file = st.file_uploader("Upload a file (Optional)", type=['txt', 'pdf'])
+        uploaded_files = st.file_uploader("Upload files (PDFs or Text)", type=['txt', 'pdf'], accept_multiple_files=True)
 
     file_text = ""
-    if uploaded_file is not None:
-        if uploaded_file.type == "text/plain":
-            file_text = str(uploaded_file.read(), "utf-8")
-            st.success("Text file uploaded successfully!")
-        elif uploaded_file.type == "application/pdf":
-            file_text = read_pdf(uploaded_file)
-            st.success("PDF file uploaded successfully!")
+    if uploaded_files:
+        combined_texts = []
+        for uploaded_file in uploaded_files:
+            if uploaded_file.type == "text/plain":
+                combined_texts.append(str(uploaded_file.read(), "utf-8"))
+            elif uploaded_file.type == "application/pdf":
+                combined_texts.append(read_pdf(uploaded_file))
 
-        # Estimate tokens and check if it exceeds the model's token limit
+        file_text = "\n".join(combined_texts)
+        st.success(f"{len(uploaded_files)} files uploaded successfully!")
         token_count = estimate_tokens(file_text)
         if token_count > 3000:
-            st.error(f"The uploaded document is too long ({int(token_count)} tokens). Please reduce the file content (Max tokens = 3000).")
+            st.error(f"The combined document is too long ({int(token_count)} tokens). Please reduce the file content (Max tokens = 3000).")
         else:
             st.text_area("File content", file_text, height=250)
 
     if st.button("Generate Questions"):
-        if len(selected_topics) > 1 and specify_weightage and sum(weightage_info.values()) != 100:
+        if specify_weightage and sum(weightage_info.values()) != 100:
             st.error("Please ensure the total weightage sums up to 100% before generating questions.")
         else:
             with st.spinner('Generating questions...'):
+                progress = st.progress(0)
                 try:
-                    if "Any" in selected_topics:
-                        # If "Any" is selected, use all topics under the chosen subject
-                        selected_topics_str = "Any"
+                    selected_topics_str = "Any" if "Any" in selected_topics else ", ".join(selected_topics)
+                    weightage_str = ', '.join([f"{topic}: {weight}%" for topic, weight in weightage_info.items()]) if specify_weightage else "Not specified"
+
+                    if question_type == "Comprehensive Exam-Style Questions":
+                        prompt_type = f"generate {user_input_no_of_qns} {user_input_topic} long, multi-part questions suitable for exams that carry more marks and require detailed answers"
                     else:
-                        # Combine selected topics into a single string for the API request
-                        selected_topics_str = ", ".join(selected_topics)
+                        prompt_type = f"generate {user_input_no_of_qns} {user_input_topic} short quiz questions"
 
-                    # Convert weightage information to a string format for the API call
-                    weightage_str = ', '.join([f"{topic}: {weight}%" for topic, weight in weightage_info.items()]) if len(selected_topics) > 1 and specify_weightage else "Not specified"
+                    for percent_complete in range(0, 101, 10):
+                        time.sleep(0.1)
+                        progress.progress(percent_complete)
 
-                    # Ensure single API call with correct parameters
                     response = client.chat.completions.create(
                         model="gpt-4o",
                         messages=[{
                             "role": "user",
-                            "content": f"With reference to the content in {file_text}, if any, and topics {selected_topics_str}, generate {user_input_no_of_qns} {user_input_topic} unique assessment or exam-style questions with corresponding answers for the academic level of \
-                                {user_input_acad_level} according to the Singapore education system of {user_input_difficulty} difficulty level. Keywords: {user_input_keyword}. \
+                            "content": f"You are a primary school teacher in Singapore. With reference to the content in {file_text}, if any, \
+                                and topics {selected_topics_str}, {prompt_type} with corresponding answers for the academic level of \
+                                {user_input_acad_level} according to the Singapore education system of {user_input_difficulty} difficulty level. \
+                                Please generate the content in {language_options[language]}. Keywords: {user_input_keyword}. \
                                 Display only questions and answers without caption or commentary. \
                                 Use LaTeX for rendering fractions and algebraic expressions. Present these questions and answers in a format that is clear and readable to users. \
                                 Weightage information: {weightage_str}. \
                                 If no topic is selected, generate a mix of questions based on the options in {subject_to_topics} according to the subject. \
-                                Display questions and their corresponding answers separately."
+                                Display questions and their corresponding answers separately, and ensure that all mathematical expressions can be processed through LaTeX."
                         }],
                         temperature=0.5,
                         n=1,
@@ -215,55 +268,39 @@ def main():
                     )
 
                     if response.choices:
-                        content = response.choices[0].message.content.strip()
-                        st.session_state.generated_questions = content
-
-                        # Display content with LaTeX rendering for both questions and answers
-                        display_content_with_latex(content)
+                        st.session_state.generated_questions = response.choices[0].message.content.strip()
+                        display_content_with_latex(st.session_state.generated_questions)
 
                 except Exception as e:
                     st.error(f"An error occurred: {str(e)}")
 
-    if "generated_questions" in st.session_state:
-        content = st.session_state.generated_questions
-
-        # Add a horizontal line to separate the generated output from the feedback module
-        st.markdown("<hr>", unsafe_allow_html=True)
-
-        # Add a rating and feedback section
+    if st.session_state.generated_questions:
         st.subheader("Rate the Generated Questions")
 
-        if "feedback_submitted" not in st.session_state:
-            st.session_state.feedback_submitted = False
-
-        if st.session_state.feedback_submitted:
-            st.info("You have already submitted feedback. Thank you!")
-        else:
+        with st.form(key="feedback_form"):
             rating = st.radio("Rate the quality of the generated questions:", [1, 2, 3, 4, 5], key="rating")
             feedback = st.text_area("Provide your feedback:", key="feedback")
 
-            if st.button("Submit Feedback"):
+            if st.form_submit_button("Submit Feedback"):
                 st.success("Thank you for your feedback!")
-                st.session_state.feedback_submitted = True
-                # Insert feedback into the database
                 c.execute('INSERT INTO feedback (rating, feedback) VALUES (?, ?)', (rating, feedback))
                 conn.commit()
 
-        # Convert content to a readable format for Excel
-        readable_content = convert_latex_to_text(content)
-        
-        # Convert content into a DataFrame for Excel export
-        df = pd.DataFrame({
-            "Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]  # Handle splitting of content without duplications
-        })
-
-        # Convert DataFrame to Excel
+        readable_content = convert_latex_to_text(st.session_state.generated_questions)
+        df = pd.DataFrame({"Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]})
         towrite = io.BytesIO()
-        df.to_excel(towrite, index=False, engine='openpyxl')  # Write to BytesIO stream
-        towrite.seek(0)  # Reset pointer
+        df.to_excel(towrite, index=False, engine='openpyxl')
+        towrite.seek(0)
 
-        # Download link
         st.download_button(label="Download Excel", data=towrite, file_name="generated_questions.xlsx", mime="application/vnd.ms-excel")
+
+    # Disclaimer
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown("""
+    **Disclaimer:** This tool is intended for reference purposes only and should not be used as an official source of educational material. 
+    The generated content may not always be accurate or reflect current educational standards. Users are encouraged to review and verify 
+    the material independently.
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
