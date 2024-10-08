@@ -8,6 +8,8 @@ import sqlite3
 import re
 import time
 import random
+from datetime import datetime, timedelta
+import hashlib
 
 # Apply a custom theme via Streamlit's configuration
 st.set_page_config(page_title="Assessment Generator & Grader", page_icon=":pencil:", layout="wide")
@@ -19,14 +21,21 @@ with open('style.css') as f:
 # Setup SQLite database for storing feedback
 conn = sqlite3.connect('feedback.db')
 c = conn.cursor()
+
+# Create or alter table to add timestamp column
 c.execute('''
           CREATE TABLE IF NOT EXISTS feedback (
               id INTEGER PRIMARY KEY,
+              question_hash TEXT UNIQUE,
               rating INTEGER NOT NULL,
-              feedback TEXT NOT NULL
+              feedback TEXT NOT NULL,
+              timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
           )
           ''')
 conn.commit()
+
+# Define cooldown period for feedback submission (in minutes)
+FEEDBACK_COOLDOWN = 10
 
 @st.cache_data
 def read_pdf(file):
@@ -34,6 +43,17 @@ def read_pdf(file):
         reader = PyPDF2.PdfReader(f)
         text = ''.join([page.extract_text() for page in reader.pages])
     return text
+
+# Helper function to check if user is within cooldown period
+def within_cooldown(last_feedback_time):
+    if not last_feedback_time:
+        return False
+    cooldown_time = last_feedback_time + timedelta(minutes=FEEDBACK_COOLDOWN)
+    return datetime.now() < cooldown_time
+
+# Generate a unique hash for the generated questions
+def generate_question_hash(content):
+    return hashlib.sha256(content.encode()).hexdigest()
 
 def estimate_tokens(text):
     words = text.split()
@@ -105,6 +125,7 @@ def display_content_with_latex(content):
         r'\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b',  # Trig and log functions
         r'\\left[\(\[\{].*?\\right[\)\]\}]',  # Parentheses and Brackets
         r'\\begin\{aligned\}.*?\\end\{aligned\}',  # Aligned equations
+        r'\\begin\{align\*?\}.*?\\end\{align\*?\}',  # Align and align* environments
     ]
     latex_regex = re.compile('|'.join(latex_patterns))
     parts = re.split(r'(\$.*?\$|\\frac\{.*?\}\{.*?\}|\\sqrt(?:\{.*?\})?|\\sum(?:_\{.*?\})?(?:\^\{.*?\})?|\\int(?:_\{.*?\})?(?:\^\{.*?\})?|\^\{.*?\}|_\{.*?\}|\\begin\{.*?matrix\}.*?\\end\{.*?matrix\}|\\text\{.*?\}|\\[a-zA-Z]+(?=\W|\Z)|\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b|\\left[\(\[\{].*?\\right[\)\]\}]|\\begin\{aligned\}.*?\\end\{aligned\})', content)
@@ -123,10 +144,15 @@ def convert_latex_to_text(content):
     return content
 
 def main():
+    # Initialize session state
     if 'generated_questions' not in st.session_state:
         st.session_state.generated_questions = ""
     if 'feedback_submitted' not in st.session_state:
         st.session_state.feedback_submitted = False
+    if 'last_feedback_time' not in st.session_state:
+        st.session_state.last_feedback_time = None
+    if 'question_hash' not in st.session_state:
+        st.session_state.question_hash = None
 
     st.title("Assessment Generator & Grader")
     st.subheader("Generate Assessments based on Academic Level, Topics, and Language or Grade them")
@@ -287,15 +313,14 @@ def main():
                         if response.choices:
                             result_content = response.choices[0].message.content.strip()
 
-                            # Split questions and answers using regex or patterns
-                            questions = re.findall(r'Q\d+:.*', result_content)
-                            answers = re.findall(r'Answer:.*', result_content)
+                            # Generate unique question hash
+                            st.session_state.question_hash = generate_question_hash(result_content)
                             st.session_state.generated_questions = result_content
                             display_content_with_latex(st.session_state.generated_questions)
 
                     except Exception as e:
                         st.error(f"An error occurred: {str(e)}")
-                    
+
                     finally:
                         # Ensure progress bar always reaches 100% after execution
                         progress.progress(100)
@@ -303,14 +328,35 @@ def main():
     if st.session_state.generated_questions:
         st.subheader("Rate the Generated Questions")
 
-        with st.form(key="feedback_form"):
-            rating = st.radio("Rate the quality of the generated questions:", [1, 2, 3, 4, 5], key="rating")
-            feedback = st.text_area("Provide your feedback:", key="feedback")
+        # Check if feedback has already been submitted for this output
+        if st.session_state.question_hash:
+            c.execute('SELECT timestamp FROM feedback WHERE question_hash = ?', (st.session_state.question_hash,))
+            feedback_row = c.fetchone()
 
-            if st.form_submit_button("Submit Feedback"):
-                st.success("Thank you for your feedback!")
-                c.execute('INSERT INTO feedback (rating, feedback) VALUES (?, ?)', (rating, feedback))
-                conn.commit()
+            if feedback_row:
+                last_feedback_time = datetime.strptime(feedback_row[0], '%Y-%m-%d %H:%M:%S')
+                st.session_state.last_feedback_time = last_feedback_time
+
+        if st.session_state.question_hash and feedback_row:
+            st.info(f"Feedback already submitted for this output at {st.session_state.last_feedback_time}.")
+        elif within_cooldown(st.session_state.last_feedback_time):
+            cooldown_remaining = (st.session_state.last_feedback_time + timedelta(minutes=FEEDBACK_COOLDOWN) - datetime.now()).seconds // 60
+            st.info(f"Please wait {cooldown_remaining} minutes before submitting feedback again.")
+        else:
+            # Feedback form for new submissions
+            with st.form(key="feedback_form"):
+                rating = st.radio("Rate the quality of the generated questions:", [1, 2, 3, 4, 5], key="rating", index=None)
+                feedback = st.text_area("Provide your feedback:", key="feedback")
+
+                if st.form_submit_button("Submit Feedback"):
+                    st.success("Thank you for your feedback!")
+                    c.execute('INSERT INTO feedback (question_hash, rating, feedback) VALUES (?, ?, ?)', 
+                              (st.session_state.question_hash, rating, feedback))
+                    conn.commit()
+                    st.session_state.feedback_submitted = True
+                    st.session_state.last_feedback_time = datetime.now()
+
+        conn.close()
 
         readable_content = convert_latex_to_text(st.session_state.generated_questions)
         df = pd.DataFrame({"Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]})
@@ -320,91 +366,6 @@ def main():
 
         st.download_button(label="Download Excel", data=towrite, file_name="generated_questions.xlsx", mime="application/vnd.ms-excel")
 
-
-    # Grading Assessments Tab (For Teachers to Grade Student Work)
-    with tab2:
-        st.subheader("Upload Student Assessments for AI Grading")
-        st.markdown("Please upload student assessments for grading. Supported formats are **PDF** and **TXT** files.")
-
-        st.info("For optimal results, please upload PDF or TXT files. Avoid complex formats for accurate grading.")
-
-        uploaded_files_for_grading = st.file_uploader("Upload assessment files", type=['txt', 'pdf'], accept_multiple_files=True)
-
-        if uploaded_files_for_grading:
-            combined_grading_texts = []
-            for uploaded_file in uploaded_files_for_grading:
-                if uploaded_file.type == "text/plain":
-                    combined_grading_texts.append(str(uploaded_file.read(), "utf-8"))
-                elif uploaded_file.type == "application/pdf":
-                    combined_grading_texts.append(read_pdf(uploaded_file))
-
-            grading_text = "\n".join(combined_grading_texts)
-            st.success(f"{len(uploaded_files_for_grading)} files uploaded for grading.")
-            st.text_area("Uploaded Assessment Content", grading_text, height=250)
-
-            if st.button("Grade Assessment"):
-                with st.spinner('Grading the assessment...'):
-                    progress = st.progress(0)
-                    try:
-                        for percent_complete in range(0, 101, 10):
-                            time.sleep(0.1)
-                            progress.progress(percent_complete)
-
-                        grading_response = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[{
-                                "role": "user",
-                                "content": f"You are a teacher grading the following student assessment:\n\n{grading_text}\n\nProvide feedback, suggestions, and a grade."
-                            }],
-                            temperature=0.5,
-                            n=1,
-                            frequency_penalty=0.0
-                        )
-
-                        if grading_response.choices:
-                            st.subheader("Grading Results")
-                            grading_result = grading_response.choices[0].message.content.strip()
-                            st.write(grading_result)
-
-                    except Exception as e:
-                        st.error(f"An error occurred during grading: {str(e)}")
-
-    with tab3:
-        st.subheader("Guide to Using Assessment Generator & Grader")
-
-        st.markdown("""
-        ### Welcome to the Assessment Generator & Grader!
-
-        This tool helps teachers generate customized assessments for their students based on topics, difficulty levels, and academic grades. Additionally, 
-        it allows for automated grading of student assessments uploaded in PDF or text formats. Here's how to use the app:
-                    
-        1. **Assessment Generation**: 
-            - Select the **subject**, **topics**, **academic level**, and **difficulty level**.
-            - You can specify keywords for specific content or concepts you want to include.
-            - Optionally, assign **weightage** to selected topics.
-            - Upload any **reference materials** (PDF or TXT).
-            - Click **Generate Questions** to generate exam-style questions. The generated content will be displayed, and you can download it as an Excel file.
-        
-        
-        You can upload your completed assessments for grading in the **Grade Assessments** section.
-                    
-        2. **Grading Assessments**:
-            - Upload student assessments (preferably in **PDF** or **TXT** format).
-            - Click **Grade Assessment** to have the AI evaluate the content and provide feedback and grading.
-
-        #### File Format Guidelines:
-        - Supported formats: **PDF**, **TXT**.
-        - Ensure clean and simple formatting for optimal results.
-
-        **Enjoy using the tool to enhance your teaching and learning experience!**
-        """)
-    # Disclaimer
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("""
-        **Disclaimer:** This tool is intended for reference purposes only and should not be used as an official source of educational material. 
-        The generated content may not always be accurate or reflect current educational standards. Users are encouraged to review and verify 
-        the material independently.
-        """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
