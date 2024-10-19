@@ -367,5 +367,90 @@ def main():
         st.download_button(label="Download Excel", data=towrite, file_name="generated_questions.xlsx", mime="application/vnd.ms-excel")
 
 
+    # Grading Assessments Tab (For Teachers to Grade Student Work)
+    with tab2:
+        st.subheader("Upload Student Assessments for AI Grading")
+        st.markdown("Please upload student assessments for grading. Supported formats are **PDF** and **TXT** files.")
+
+        st.info("For optimal results, please upload PDF or TXT files. Avoid complex formats for accurate grading.")
+
+        uploaded_files_for_grading = st.file_uploader("Upload assessment files", type=['txt', 'pdf'], accept_multiple_files=True)
+
+        if uploaded_files_for_grading:
+            combined_grading_texts = []
+            for uploaded_file in uploaded_files_for_grading:
+                if uploaded_file.type == "text/plain":
+                    combined_grading_texts.append(str(uploaded_file.read(), "utf-8"))
+                elif uploaded_file.type == "application/pdf":
+                    combined_grading_texts.append(read_pdf(uploaded_file))
+
+            grading_text = "\n".join(combined_grading_texts)
+            st.success(f"{len(uploaded_files_for_grading)} files uploaded for grading.")
+            st.text_area("Uploaded Assessment Content", grading_text, height=250)
+
+            if st.button("Grade Assessment"):
+                with st.spinner('Grading the assessment...'):
+                    progress = st.progress(0)
+                    try:
+                        for percent_complete in range(0, 101, 10):
+                            time.sleep(0.1)
+                            progress.progress(percent_complete)
+
+                        grading_response = client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[{
+                                "role": "user",
+                                "content": f"You are a teacher grading the following student assessment:\n\n{grading_text}\n\nProvide feedback, suggestions, and a grade."
+                            }],
+                            temperature=0.5,
+                            n=1,
+                            frequency_penalty=0.0
+                        )
+
+                        if grading_response.choices:
+                            st.subheader("Grading Results")
+                            grading_result = grading_response.choices[0].message.content.strip()
+                            st.write(grading_result)
+
+                    except Exception as e:
+                        st.error(f"An error occurred during grading: {str(e)}")
+
+    with tab3:
+        st.subheader("Guide to Using Assessment Generator & Grader")
+
+        st.markdown("""
+        ### Welcome to the Assessment Generator & Grader!
+
+        This tool helps teachers generate customized assessments for their students based on topics, difficulty levels, and academic grades. Additionally, 
+        it allows for automated grading of student assessments uploaded in PDF or text formats. Here's how to use the app:
+                    
+        1. **Assessment Generation**: 
+            - Select the **subject**, **topics**, **academic level**, and **difficulty level**.
+            - You can specify keywords for specific content or concepts you want to include.
+            - Optionally, assign **weightage** to selected topics.
+            - Upload any **reference materials** (PDF or TXT).
+            - Click **Generate Questions** to generate exam-style questions. The generated content will be displayed, and you can download it as an Excel file.
+        
+        
+        You can upload your completed assessments for grading in the **Grade Assessments** section.
+                    
+        2. **Grading Assessments**:
+            - Upload student assessments (preferably in **PDF** or **TXT** format).
+            - Click **Grade Assessment** to have the AI evaluate the content and provide feedback and grading.
+
+        #### File Format Guidelines:
+        - Supported formats: **PDF**, **TXT**.
+        - Ensure clean and simple formatting for optimal results.
+
+        **Enjoy using the tool to enhance your teaching and learning experience!**
+        """)
+    # Disclaimer
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("""
+        **Disclaimer:** This tool is intended for reference purposes only and should not be used as an official source of educational material. 
+        The generated content may not always be accurate or reflect current educational standards. Users are encouraged to review and verify 
+        the material independently.
+        """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
     main()
