@@ -22,14 +22,27 @@ with open('style.css') as f:
 conn = sqlite3.connect('feedback.db')
 c = conn.cursor()
 
-# Create or alter table to add timestamp column
+# Create or alter table to add subject and topics columns for feedback
 c.execute('''
           CREATE TABLE IF NOT EXISTS feedback (
               id INTEGER PRIMARY KEY,
               question_hash TEXT UNIQUE,
+              subject TEXT NOT NULL,
+              topics TEXT NOT NULL,
               rating INTEGER NOT NULL,
               feedback TEXT NOT NULL,
               timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+          ''')
+
+# Create table for storing generated questions
+c.execute('''
+          CREATE TABLE IF NOT EXISTS generated_questions (
+              id INTEGER PRIMARY KEY,
+              subject TEXT NOT NULL,
+              difficulty_level TEXT NOT NULL,
+              question_content TEXT NOT NULL,
+              generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )
           ''')
 conn.commit()
@@ -38,79 +51,112 @@ conn.commit()
 FEEDBACK_COOLDOWN = 10
 
 @st.cache_data
+# Function to read the content from an uploaded PDF file
 def read_pdf(file):
     with io.BytesIO(file.getvalue()) as f:
         reader = PyPDF2.PdfReader(f)
         text = ''.join([page.extract_text() for page in reader.pages])
     return text
 
-# Helper function to check if user is within cooldown period
+# Helper function to check if user is within cooldown period for feedback submission
 def within_cooldown(last_feedback_time):
     if not last_feedback_time:
         return False
     cooldown_time = last_feedback_time + timedelta(minutes=FEEDBACK_COOLDOWN)
     return datetime.now() < cooldown_time
 
-# Generate a unique hash for the generated questions
+# Generate a unique hash for the generated questions to identify feedback
 def generate_question_hash(content):
     return hashlib.sha256(content.encode()).hexdigest()
 
+# Estimate the number of tokens in the text (approximation used for API limits)
 def estimate_tokens(text):
     words = text.split()
     return len(words) * 1.33  # Approximation: 1.33 words per token
 
+# Fix repeated units in the content, such as "km/h km/h"
 def fix_repeated_units(content):
+    # Replace repeated occurrences of "km/h" with a single instance
     content = re.sub(r'(km/h)\s+\1', r'\1', content)
+    # Replace repeated occurrences of "hours" with a single instance
     content = re.sub(r'(hours)\s+\1', r'\1', content)
     return content
 
+# Fix unbalanced braces in the content
 def fix_unbalanced_braces(content):
+    # Count the number of opening and closing braces
     open_braces = content.count('{')
     close_braces = content.count('}')
+    # Add missing closing braces if there are more opening braces
     if open_braces > close_braces:
         content += '}' * (open_braces - close_braces)
+    # Add missing opening braces if there are more closing braces
     elif close_braces > open_braces:
         content = '{' * (close_braces - open_braces) + content
     return content
 
+# Fix nested fractions by ensuring braces are balanced
 def fix_nested_fractions(content):
+    # Regular expression to match LaTeX fraction commands
     fraction_pattern = r'\\frac\{[^\}]*\}\{[^\}]*\}'
+    # Apply fix_unbalanced_braces to each fraction found
     content = re.sub(fraction_pattern, lambda match: fix_unbalanced_braces(match.group()), content)
     return content
 
+# Clean up LaTeX expressions for better formatting
 def clean_latex_expression(content):
+    # Remove unnecessary parentheses around fractions
     content = re.sub(r'\(\s*\\frac\{[^}]*\}\{[^}]*\}\s*\)', lambda match: match.group(0)[1:-1], content)
+    # Ensure proper spacing in units like km/h and hours
     content = re.sub(r',\s*\\text{km/h}', r'\\, \text{km/h}', content)
     content = re.sub(r',\s*\\text{hours}', r'\\, \text{hours}', content)
     content = re.sub(r'\)\s*km/h', r'\\, \text{km/h})', content)
     content = re.sub(r'\)\s*hours', r'\\, \text{hours})', content)
+    # Fix fraction formatting by ensuring no extra spaces
     content = re.sub(r'\\frac\s*\{(.*?)\}\s*\{(.*?)\}', r'\\frac{\1}{\2}', content)
+    # Remove repeated units like "km/h km/h" or "hours hours"
     content = re.sub(r'(km/h)\s+(km/h)', r'\1', content)
     content = re.sub(r'(hours)\s+(hours)', r'\1', content)
     return content
 
+# Apply a series of fixes to LaTeX expressions to improve formatting
 def fix_latex_expressions(content):
+    # Fix unbalanced braces first
     content = fix_unbalanced_braces(content)
+    # Fix repeated units
     content = fix_repeated_units(content)
+    # Remove extra spaces inside parentheses
     content = re.sub(r'\(\s+', '(', content)
     content = re.sub(r'\s+\)', ')', content)
+    # Clean up LaTeX expressions for better formatting
     content = clean_latex_expression(content)
     return content
 
+# Ensure that LaTeX expressions are complete, particularly fractions and text commands
 def complete_latex_expressions(content):
+    # Fix nested fractions by balancing braces
     content = fix_nested_fractions(content)
+    # Ensure fractions are complete if braces are missing
     content = re.sub(r'\\frac\{([^\}]*)$', r'\\frac{\1}', content)
+    # Ensure text commands are complete if braces are missing
     content = re.sub(r'\\text\{([^\}]*)$', r'\\text{\1}', content)
     return content
 
+# Custom LaTeX processing function that combines multiple fixes
 def custom_latex_processing(content):
+    # Fix unbalanced braces
     content = fix_unbalanced_braces(content)
+    # Complete LaTeX expressions for fractions and text commands
     content = complete_latex_expressions(content)
+    # Fix repeated units in the content
     content = fix_repeated_units(content)
     return content
 
+# Display LaTeX content with proper formatting in Streamlit
 def display_content_with_latex(content):
+    # Apply custom LaTeX processing to clean up the content
     content = custom_latex_processing(content)
+    # Define patterns for LaTeX expressions to identify them
     latex_patterns = [
         r'\\frac\{.*?\}\{.*?\}',  # Fractions
         r'\$.*?\$',               # Inline math
@@ -128,7 +174,26 @@ def display_content_with_latex(content):
         r'\\begin\{align\*?\}.*?\\end\{align\*?\}',  # Align and align* environments
     ]
     latex_regex = re.compile('|'.join(latex_patterns))
-    parts = re.split(r'(\$.*?\$|\\frac\{.*?\}\{.*?\}|\\sqrt(?:\{.*?\})?|\\sum(?:_\{.*?\})?(?:\^\{.*?\})?|\\int(?:_\{.*?\})?(?:\^\{.*?\})?|\^\{.*?\}|_\{.*?\}|\\begin\{.*?matrix\}.*?\\end\{.*?matrix\}|\\text\{.*?\}|\\[a-zA-Z]+(?=\W|\Z)|\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b|\\left[\(\[\{].*?\\right[\)\]\}]|\\begin\{aligned\}.*?\\end\{aligned\})', content)
+    # Split content based on LaTeX patterns
+    parts = re.split(
+        r'('  # Start a capturing group
+        r'\$.*?\$|'  # Inline math
+        r'\\frac\{.*?\}\{.*?\}|'  # Fractions
+        r'\\sqrt(?:\{.*?\})?|'  # Square root
+        r'\\sum(?:_\{.*?\})?(?:\^\{.*?\})?|'  # Summation
+        r'\\int(?:_\{.*?\})?(?:\^\{.*?\})?|'  # Integral
+        r'\^\{.*?\}|'  # Exponents (Superscripts)
+        r'_\{.*?\}|'  # Subscripts
+        r'\\begin\{.*?matrix\}.*?\\end\{.*?matrix\}|'  # Matrices and arrays
+        r'\\text\{.*?\}|'  # Text formatting in math mode
+        r'\\[a-zA-Z]+(?=\W|\Z)|'  # Greek letters
+        r'\\(?:log|sin|cos|tan|ln|exp|arcsin|arccos|arctan)\b|'  # Trig and log functions
+        r'\\left[\(\[\{].*?\\right[\)\]\}]|'  # Parentheses and Brackets
+        r'\\begin\{aligned\}.*?\\end\{aligned\}'  # Aligned equations
+        r')', 
+        content
+)
+    # Process each part to format LaTeX content
     processed_parts = []
     for part in parts:
         if latex_regex.search(part):
@@ -136,8 +201,10 @@ def display_content_with_latex(content):
         else:
             processed_parts.append(part.strip())
     final_content = ' '.join(processed_parts)
+    # Display the processed content in Streamlit
     st.markdown(final_content)
 
+# Convert LaTeX to plain text for display or export
 def convert_latex_to_text(content):
     content = re.sub(r'\\frac\{(.*?)\}\{(.*?)\}', r'\1/\2', content)
     content = re.sub(r'\\text\{(.*?)\}', r'\1', content)
@@ -224,16 +291,16 @@ def main():
             # Adding a tooltip for the "Keywords" field
             user_input_keyword = st.text_input("Keywords (Optional):", help="Use specific keywords to guide the type of questions generated. For example, 'fractions' for math, or 'grammar' for English.")
 
-        specify_weightage = st.checkbox("Specify Topic Portioning for Assessment?")
-        weightage_info = {}
+        specify_portions = st.checkbox("Specify Topic Portioning for Assessment?")
+        portions_info = {}
 
-        if specify_weightage:
+        if specify_portions:
             if len(selected_topics) > 1:
                 st.markdown("### Enter the portion of the assessment (in %) to be allocated to each topic:")
                 total_weight = 0
                 for topic in selected_topics:
                     weight = st.number_input(f"Portion for {topic} (%)", min_value=0, max_value=100, value=0)
-                    weightage_info[topic] = weight
+                    portions_info[topic] = weight
                     total_weight += weight
 
                 if total_weight != 100:
@@ -241,7 +308,7 @@ def main():
             else:
                 st.warning("Portioning is only available when multiple topics are selected.")
 
-        st.info("Upload text or PDF files with content you want to use for generating assessments.")
+        st.info("Upload text or PDF files with content you want to use as reference(s).")
 
         buff, col, buff2 = st.columns([1, 2, 1])
         with col:
@@ -265,8 +332,8 @@ def main():
                 st.text_area("File content", file_text, height=250)
 
         if st.button("Generate Questions"):
-            if specify_weightage and sum(weightage_info.values()) != 100:
-                st.error("Please ensure the total weightage sums up to 100% before generating questions.")
+            if specify_portions and sum(portions_info.values()) != 100:
+                st.error("Please ensure the total portions sums up to 100% before generating questions.")
             else:
                 with st.spinner('Generating questions...'):
                     progress = st.progress(0)
@@ -274,7 +341,7 @@ def main():
 
                     try:
                         selected_topics_str = "Any" if "Any" in selected_topics else ", ".join(selected_topics)
-                        weightage_str = ', '.join([f"{topic}: {weight}%" for topic, weight in weightage_info.items()]) if specify_weightage else "Not specified"
+                        portions_str = ', '.join([f"{topic}: {weight}%" for topic, weight in portions_info.items()]) if specify_portions else "Not specified"
 
                         if question_type == "Comprehensive Exam-Style Questions":
                             prompt_type = f"generate {user_input_no_of_qns} {user_input_topic} long, multi-part questions suitable for exams that carry more marks and require detailed answers"
@@ -287,6 +354,9 @@ def main():
                             i += random.randint(5, 10)
                             progress.progress(min(i, 90))  # Cap the progress at 90%
 
+                        # Start timing API call
+                        start_time = time.time()
+
                         # Get the response
                         response = client.chat.completions.create(
                             model="gpt-4o",
@@ -298,7 +368,7 @@ def main():
                                     Please generate the content in {language_options[language]}. Keywords: {user_input_keyword}. \
                                     Display only questions and answers without caption or commentary. \
                                     Use LaTeX for rendering fractions and algebraic expressions. Present these questions and answers in a format that is clear and readable to users. \
-                                    Weightage information: {weightage_str}. \
+                                    portions information: {portions_str}. \
                                     If no topic is selected, generate a mix of questions based on the options in {subject_to_topics} according to the subject. \
                                     Display questions and their corresponding answers separately, and ensure that all mathematical expressions can be processed through LaTeX."
                             }],
@@ -306,6 +376,9 @@ def main():
                             n=1,
                             frequency_penalty=0.0
                         )
+
+                        # Record response time
+                        response_time = int((time.time() - start_time) * 1000)  # Response time in milliseconds
 
                         # Immediately set the progress bar to 100% when the response is received
                         progress.progress(100)
@@ -316,7 +389,19 @@ def main():
                             # Generate unique question hash
                             st.session_state.question_hash = generate_question_hash(result_content)
                             st.session_state.generated_questions = result_content
+                            st.session_state.subject = user_input_topic
+                            st.session_state.topics = selected_topics_str
                             display_content_with_latex(st.session_state.generated_questions)
+
+                            # Insert generated questions into the generated_questions table
+                            c.execute('INSERT INTO generated_questions (subject, difficulty_level, question_content) VALUES (?, ?, ?)',
+                                      (user_input_topic, user_input_difficulty, result_content))
+                            
+                            # Insert API usage log into the api_usage_logs table
+                            c.execute('INSERT INTO api_usage_logs (api_request, api_response, response_time) VALUES (?, ?, ?)',
+                                      (str(response.choices[0].message), result_content, response_time))
+
+                            conn.commit()
 
                     except Exception as e:
                         st.error(f"An error occurred: {str(e)}")
@@ -350,8 +435,8 @@ def main():
 
                 if st.form_submit_button("Submit Feedback"):
                     st.success("Thank you for your feedback!")
-                    c.execute('INSERT INTO feedback (question_hash, rating, feedback) VALUES (?, ?, ?)', 
-                              (st.session_state.question_hash, rating, feedback))
+                    c.execute('INSERT INTO feedback (question_hash, subject, topics, rating, feedback) VALUES (?, ?, ?, ?, ?)', 
+                              (st.session_state.question_hash, st.session_state.subject, st.session_state.topics, rating, feedback))
                     conn.commit()
                     st.session_state.feedback_submitted = True
                     st.session_state.last_feedback_time = datetime.now()
@@ -427,7 +512,7 @@ def main():
         1. **Assessment Generation**: 
             - Select the **subject**, **topics**, **academic level**, and **difficulty level**.
             - You can specify keywords for specific content or concepts you want to include.
-            - Optionally, assign **weightage** to selected topics.
+            - Optionally, assign **portions** to selected topics.
             - Upload any **reference materials** (PDF or TXT).
             - Click **Generate Questions** to generate exam-style questions. The generated content will be displayed, and you can download it as an Excel file.
         
