@@ -193,7 +193,7 @@ def display_content_with_latex(content):
         r'\\begin\{aligned\}.*?\\end\{aligned\}'  # Aligned equations
         r')', 
         content
-    )
+)
     # Process each part to format LaTeX content
     processed_parts = []
     for part in parts:
@@ -360,7 +360,7 @@ def main():
                         start_time = time.time()
 
                         # Get the response
-                        response = openai.chat_completions.create(
+                        response = openai.chat.completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
@@ -400,9 +400,23 @@ def main():
                                       (user_input_topic, user_input_difficulty, result_content))
                             
                             # Insert API usage log into the api_usage_logs table
-                            c.execute('INSERT INTO api_usage_logs
+                            c.execute('INSERT INTO api_usage_logs (api_request, api_response, response_time) VALUES (?, ?, ?)',
+                                      (str(response.choices[0].message), result_content, response_time))
+
+                            conn.commit()
+
+                    except Exception as e:
+                        st.error(f"An error occurred: {str(e)}")
+
+                    finally:
+                        # Ensure progress bar always reaches 100% after execution
+                        progress.progress(100)
 
     if st.session_state.generated_questions:
+        st.subheader("Rate the Generated Questions")
+
+        # Check if feedback has already been submitted for this output
+        if st.session_state.generated_questions:
         st.subheader("Rate the Generated Questions")
 
         # Check if feedback has already been submitted for this output
@@ -437,7 +451,6 @@ def main():
                         st.error("Please select a rating before submitting your feedback.")
 
         conn.close()
-
         readable_content = convert_latex_to_text(st.session_state.generated_questions)
         df = pd.DataFrame({"Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]})
         towrite = io.BytesIO()
@@ -476,7 +489,7 @@ def main():
                             time.sleep(0.1)
                             progress.progress(percent_complete)
 
-                        grading_response = openai.chat_completions.create(
+                        grading_response = openai.chat.completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
@@ -524,3 +537,13 @@ def main():
 
         **Enjoy using the tool to enhance your teaching and learning experience!**
         """)
+    # Disclaimer
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("""
+        **Disclaimer:** This tool is intended for reference purposes only and should not be used as an official source of educational material. 
+        The generated content may not always be accurate or reflect current educational standards. Users are encouraged to review and verify 
+        the material independently.
+        """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
