@@ -416,10 +416,6 @@ def main():
         st.subheader("Rate the Generated Questions")
 
         # Check if feedback has already been submitted for this output
-        if st.session_state.generated_questions:
-        st.subheader("Rate the Generated Questions")
-
-        # Check if feedback has already been submitted for this output
         if st.session_state.question_hash:
             c.execute('SELECT timestamp FROM feedback WHERE question_hash = ?', (st.session_state.question_hash,))
             feedback_row = c.fetchone()
