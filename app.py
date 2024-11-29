@@ -10,6 +10,7 @@ import time
 import random
 from datetime import datetime, timedelta
 import hashlib
+import os
 
 # Apply a custom theme via Streamlit's configuration
 st.set_page_config(page_title="Assessment Generator & Grader", page_icon=":pencil:", layout="wide")
@@ -232,12 +233,14 @@ def main():
         st.session_state.api_key = user_api_key
         st.success("API key set successfully!")
 
+    # Ensure API key is never directly visible in Streamlit widgets or logs
     if not st.session_state.get('api_key'):
         st.warning("Please enter and confirm your OpenAI API key to continue.")
         st.stop()
 
+    # Configure OpenAI client using API key securely
     openai.api_key = st.session_state.api_key
-    client = openai.OpenAI(api_key=user_api_key)
+    client = openai.OpenAI(api_key=st.session_state.api_key)
 
     # Create tabs for Teachers (Assessment Generation), Students (Grading), and Guide
     tab1, tab2, tab3 = st.tabs(["Assessment Generation", "Grade Assessments", "Guide"])
