@@ -240,7 +240,6 @@ def main():
 
     # Configure OpenAI client using API key securely
     openai.api_key = st.session_state.api_key
-    client = openai.OpenAI(api_key=st.session_state.api_key)
 
     # Create tabs for Teachers (Assessment Generation), Students (Grading), and Guide
     tab1, tab2, tab3 = st.tabs(["Assessment Generation", "Grade Assessments", "Guide"])
@@ -361,8 +360,8 @@ def main():
                         start_time = time.time()
 
                         # Get the response
-                        response = client.chat.completions.create(
-                            model="gpt-4o",
+                        response = openai.ChatCompletion.create(
+                            model="gpt-4",
                             messages=[{
                                 "role": "user",
                                 "content": f"You are a primary school teacher in Singapore. With reference to the content in {file_text}, if any, \
@@ -484,8 +483,8 @@ def main():
                             time.sleep(0.1)
                             progress.progress(percent_complete)
 
-                        grading_response = client.chat.completions.create(
-                            model="gpt-4o",
+                        grading_response = openai.ChatCompletion.create(
+                            model="gpt-4",
                             messages=[{
                                 "role": "user",
                                 "content": f"You are a teacher grading the following student assessment:\n\n{grading_text}\n\nProvide feedback, suggestions, and a grade."
