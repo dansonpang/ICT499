@@ -360,7 +360,7 @@ def main():
                         start_time = time.time()
 
                         # Get the response
-                        response = openai.chat_completions.create(
+                        response = openai.chat.completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
@@ -484,7 +484,7 @@ def main():
                             time.sleep(0.1)
                             progress.progress(percent_complete)
 
-                        grading_response = openai.chat_completions.create(
+                        grading_response = openai.chat.completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
