@@ -346,3 +346,198 @@ def main():
                         portions_str = ', '.join([f"{topic}: {weight}%" for topic, weight in portions_info.items()]) if specify_portions else "Not specified"
 
                         if question_type == "Comprehensive Exam-Style Questions":
+                            prompt_type = f"generate {user_input_no_of_qns} {user_input_topic} long, multi-part questions suitable for exams that carry more marks and require detailed answers"
+                        else:
+                            prompt_type = f"generate {user_input_no_of_qns} {user_input_topic} short quiz questions"
+
+                        # Simulate progress while waiting for API response
+                        while i < 90:  # Simulate up to 90% until the response is received
+                            time.sleep(random.uniform(0.1, 0.3))  # Random time delay
+                            i += random.randint(5, 10)
+                            progress.progress(min(i, 90))  # Cap the progress at 90%
+
+                        # Start timing API call
+                        start_time = time.time()
+
+                        # Get the response
+                        response = openai.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[{
+                                "role": "user",
+                                "content": f"You are a primary school teacher in Singapore. With reference to the content in {file_text}, if any, \
+                                    and topics {selected_topics_str}, {prompt_type} with corresponding answers for the academic level of \
+                                    {user_input_acad_level} according to the Singapore education system of {user_input_difficulty} difficulty level. \
+                                    Please generate the content in {language_options[language]}. Keywords: {user_input_keyword}. \
+                                    Display only questions and answers without caption or commentary. \
+                                    Use LaTeX for rendering fractions and algebraic expressions. Present these questions and answers in a format that is clear and readable to users. \
+                                    portions information: {portions_str}. \
+                                    If no topic is selected, generate a mix of questions based on the options in {subject_to_topics} according to the subject. \
+                                    Display questions and their corresponding answers separately, and ensure that all mathematical expressions can be processed through LaTeX."
+                            }],
+                            temperature=0.5,
+                            n=1,
+                            frequency_penalty=0.0
+                        )
+
+                        # Record response time
+                        response_time = int((time.time() - start_time) * 1000)  # Response time in milliseconds
+
+                        # Immediately set the progress bar to 100% when the response is received
+                        progress.progress(100)
+
+                        if response.choices:
+                            result_content = response.choices[0].message.content.strip()
+
+                            # Generate unique question hash
+                            st.session_state.question_hash = generate_question_hash(result_content)
+                            st.session_state.generated_questions = result_content
+                            st.session_state.subject = user_input_topic
+                            st.session_state.topics = selected_topics_str
+                            display_content_with_latex(st.session_state.generated_questions)
+
+                            # Insert generated questions into the generated_questions table
+                            c.execute('INSERT INTO generated_questions (subject, difficulty_level, question_content) VALUES (?, ?, ?)',
+                                      (user_input_topic, user_input_difficulty, result_content))
+                            
+                            # Insert API usage log into the api_usage_logs table
+                            c.execute('INSERT INTO api_usage_logs (api_request, api_response, response_time) VALUES (?, ?, ?)',
+                                      (str(response.choices[0].message), result_content, response_time))
+
+                            conn.commit()
+
+                    except Exception as e:
+                        st.error(f"An error occurred: {str(e)}")
+
+                    finally:
+                        # Ensure progress bar always reaches 100% after execution
+                        progress.progress(100)
+
+    if st.session_state.generated_questions:
+        st.subheader("Rate the Generated Questions")
+
+        # Check if feedback has already been submitted for this output
+        if st.session_state.question_hash:
+            c.execute('SELECT timestamp FROM feedback WHERE question_hash = ?', (st.session_state.question_hash,))
+            feedback_row = c.fetchone()
+
+            if feedback_row:
+                last_feedback_time = datetime.strptime(feedback_row[0], '%Y-%m-%d %H:%M:%S')
+                st.session_state.last_feedback_time = last_feedback_time
+
+        if st.session_state.question_hash and feedback_row:
+            st.info(f"Feedback already submitted for this output at {st.session_state.last_feedback_time}.")
+        elif within_cooldown(st.session_state.last_feedback_time):
+            cooldown_remaining = (st.session_state.last_feedback_time + timedelta(minutes=FEEDBACK_COOLDOWN) - datetime.now()).seconds // 60
+            st.info(f"Please wait {cooldown_remaining} minutes before submitting feedback again.")
+        else:
+            # Feedback form for new submissions
+            with st.form(key="feedback_form"):
+                rating = st.radio("Rate the quality of the generated questions:", [1, 2, 3, 4, 5], key="rating", index=None)
+                feedback = st.text_area("Provide your feedback:", key="feedback")
+
+                if st.form_submit_button("Submit Feedback"):
+                    st.success("Thank you for your feedback!")
+                    c.execute('INSERT INTO feedback (question_hash, subject, topics, rating, feedback) VALUES (?, ?, ?, ?, ?)', 
+                              (st.session_state.question_hash, st.session_state.subject, st.session_state.topics, rating, feedback))
+                    conn.commit()
+                    st.session_state.feedback_submitted = True
+                    st.session_state.last_feedback_time = datetime.now()
+
+        conn.close()
+
+        readable_content = convert_latex_to_text(st.session_state.generated_questions)
+        df = pd.DataFrame({"Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]})
+        towrite = io.BytesIO()
+        df.to_excel(towrite, index=False, engine='openpyxl')
+        towrite.seek(0)
+
+        st.download_button(label="Download Excel", data=towrite, file_name="generated_questions.xlsx", mime="application/vnd.ms-excel")
+
+
+    # Grading Assessments Tab (For Teachers to Grade Student Work)
+    with tab2:
+        st.subheader("Upload Student Assessments for AI Grading")
+        st.markdown("Please upload student assessments for grading. Supported formats are **PDF** and **TXT** files.")
+
+        st.info("For optimal results, please upload PDF or TXT files. Avoid complex formats for accurate grading.")
+
+        uploaded_files_for_grading = st.file_uploader("Upload assessment files", type=['txt', 'pdf'], accept_multiple_files=True)
+
+        if uploaded_files_for_grading:
+            combined_grading_texts = []
+            for uploaded_file in uploaded_files_for_grading:
+                if uploaded_file.type == "text/plain":
+                    combined_grading_texts.append(str(uploaded_file.read(), "utf-8"))
+                elif uploaded_file.type == "application/pdf":
+                    combined_grading_texts.append(read_pdf(uploaded_file))
+
+            grading_text = "\n".join(combined_grading_texts)
+            st.success(f"{len(uploaded_files_for_grading)} files uploaded for grading.")
+            st.text_area("Uploaded Assessment Content", grading_text, height=250)
+
+            if st.button("Grade Assessment"):
+                with st.spinner('Grading the assessment...'):
+                    progress = st.progress(0)
+                    try:
+                        for percent_complete in range(0, 101, 10):
+                            time.sleep(0.1)
+                            progress.progress(percent_complete)
+
+                        grading_response = openai.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[{
+                                "role": "user",
+                                "content": f"You are a teacher grading the following student assessment:\n\n{grading_text}\n\nProvide feedback, suggestions, and a grade."
+                            }],
+                            temperature=0.5,
+                            n=1,
+                            frequency_penalty=0.0
+                        )
+
+                        if grading_response.choices:
+                            st.subheader("Grading Results")
+                            grading_result = grading_response.choices[0].message.content.strip()
+                            st.write(grading_result)
+
+                    except Exception as e:
+                        st.error(f"An error occurred during grading: {str(e)}")
+
+    with tab3:
+        st.subheader("Guide to Using Assessment Generator & Grader")
+
+        st.markdown("""
+        ### Welcome to the Assessment Generator & Grader!
+
+        This tool helps teachers generate customized assessments for their students based on topics, difficulty levels, and academic grades. Additionally, 
+        it allows for automated grading of student assessments uploaded in PDF or text formats. Here's how to use the app:
+                    
+        1. **Assessment Generation**: 
+            - Select the **subject**, **topics**, **academic level**, and **difficulty level**.
+            - You can specify keywords for specific content or concepts you want to include.
+            - Optionally, assign **portions** to selected topics.
+            - Upload any **reference materials** (PDF or TXT).
+            - Click **Generate Questions** to generate exam-style questions. The generated content will be displayed, and you can download it as an Excel file.
+        
+        
+        You can upload your completed assessments for grading in the **Grade Assessments** section.
+                    
+        2. **Grading Assessments**:
+            - Upload student assessments (preferably in **PDF** or **TXT** format).
+            - Click **Grade Assessment** to have the AI evaluate the content and provide feedback and grading.
+
+        #### File Format Guidelines:
+        - Supported formats: **PDF**, **TXT**.
+        - Ensure clean and simple formatting for optimal results.
+
+        **Enjoy using the tool to enhance your teaching and learning experience!**
+        """)
+    # Disclaimer
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("""
+        **Disclaimer:** This tool is intended for reference purposes only and should not be used as an official source of educational material. 
+        The generated content may not always be accurate or reflect current educational standards. Users are encouraged to review and verify 
+        the material independently.
+        """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
