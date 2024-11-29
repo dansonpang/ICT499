@@ -360,8 +360,8 @@ def main():
                         start_time = time.time()
 
                         # Get the response
-                        response = openai.chat.completions.create(
-                            model="gpt-4o",
+                        response = openai.ChatCompletion.create(
+                            model="gpt-4",
                             messages=[{
                                 "role": "user",
                                 "content": f"You are a primary school teacher in Singapore. With reference to the content in {file_text}, if any, \
@@ -483,8 +483,8 @@ def main():
                             time.sleep(0.1)
                             progress.progress(percent_complete)
 
-                        grading_response = openai.chat.completions.create(
-                            model="gpt-4o",
+                        grading_response = openai.ChatCompletion.create(
+                            model="gpt-4",
                             messages=[{
                                 "role": "user",
                                 "content": f"You are a teacher grading the following student assessment:\n\n{grading_text}\n\nProvide feedback, suggestions, and a grade."
