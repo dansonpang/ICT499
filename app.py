@@ -360,7 +360,7 @@ def main():
                         start_time = time.time()
 
                         # Get the response
-                        response = openai.chat.completions.create(
+                        response = openai.chat_completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
@@ -436,14 +436,15 @@ def main():
                 feedback = st.text_area("Provide your feedback:", key="feedback")
 
                 if st.form_submit_button("Submit Feedback"):
-                    st.success("Thank you for your feedback!")
-                    c.execute('INSERT INTO feedback (question_hash, subject, topics, rating, feedback) VALUES (?, ?, ?, ?, ?)', 
-                              (st.session_state.question_hash, st.session_state.subject, st.session_state.topics, rating, feedback))
-                    conn.commit()
-                    st.session_state.feedback_submitted = True
-                    st.session_state.last_feedback_time = datetime.now()
-
-        conn.close()
+                    try:
+                        c.execute('INSERT OR IGNORE INTO feedback (question_hash, subject, topics, rating, feedback) VALUES (?, ?, ?, ?, ?)', 
+                                  (st.session_state.question_hash, st.session_state.subject, st.session_state.topics, rating, feedback))
+                        conn.commit()
+                        st.success("Thank you for your feedback!")
+                        st.session_state.feedback_submitted = True
+                        st.session_state.last_feedback_time = datetime.now()
+                    except sqlite3.IntegrityError:
+                        st.error("An error occurred: Feedback for this output has already been submitted.")
 
         readable_content = convert_latex_to_text(st.session_state.generated_questions)
         df = pd.DataFrame({"Questions": [line.strip() for line in readable_content.splitlines() if line.strip()]})
@@ -483,7 +484,7 @@ def main():
                             time.sleep(0.1)
                             progress.progress(percent_complete)
 
-                        grading_response = openai.chat.completions.create(
+                        grading_response = openai.chat_completions.create(
                             model="gpt-4o",
                             messages=[{
                                 "role": "user",
