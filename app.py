@@ -326,8 +326,8 @@ def main():
             file_text = "\n".join(combined_texts)
             st.success(f"{len(uploaded_files)} files uploaded successfully!")
             token_count = estimate_tokens(file_text)
-            if token_count > 3000:
-                st.error(f"The combined document is too long ({int(token_count)} tokens). Please reduce the file content (Max tokens = 3000).")
+            if token_count > 100000:
+                st.error(f"The combined document is too long ({int(token_count)} tokens). Please reduce the file content (Max tokens = 100000).")
             else:
                 st.text_area("File content", file_text, height=250)
 
